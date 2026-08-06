@@ -227,12 +227,68 @@ final class Validator
         return $validated;
     }
 
+    /**
+     * Split a pipe-delimited rule string WITHOUT tearing a regex in half.
+     *
+     * `explode('|', ...)` corrupted any pattern containing an alternation —
+     * 'regex:/^(a|b)$/' became 'regex:/^(a' plus 'b)$/', so the rule silently
+     * stopped matching what it was written to match. Regex alternation is
+     * common enough that requiring the array form for it is a trap.
+     *
+     * A `regex:`/`not_regex:` segment therefore re-absorbs following segments
+     * until its delimiter is balanced.
+     *
+     * @return list<string>
+     */
+    private static function splitRules(string $ruleSet): array
+    {
+        $parts = explode('|', $ruleSet);
+        $rules = [];
+
+        for ($i = 0, $n = count($parts); $i < $n; $i++) {
+            $rule = $parts[$i];
+
+            if (preg_match('/^(not_)?regex:(.)/', $rule, $m) === 1) {
+                $delimiter = $m[2];
+                // Keep re-joining while the pattern is still open. Count only
+                // UNESCAPED delimiters: '\/' inside a pattern is a literal.
+                while ($i + 1 < $n && self::unescapedCount($rule, $delimiter) < 2) {
+                    $rule .= '|' . $parts[++$i];
+                }
+            }
+
+            $rules[] = $rule;
+        }
+
+        return $rules;
+    }
+
+    /** Occurrences of $needle in $haystack that are not backslash-escaped. */
+    private static function unescapedCount(string $haystack, string $needle): int
+    {
+        $count = 0;
+        for ($i = 0, $len = strlen($haystack); $i < $len; $i++) {
+            if ($haystack[$i] !== $needle) {
+                continue;
+            }
+            $backslashes = 0;
+            for ($j = $i - 1; $j >= 0 && $haystack[$j] === '\\'; $j--) {
+                $backslashes++;
+            }
+            if ($backslashes % 2 === 0) {
+                $count++;
+            }
+        }
+
+        return $count;
+    }
+
     private function run(): void
     {
         $this->errors = [];
 
         foreach ($this->rules as $field => $ruleSet) {
-            $rules = is_array($ruleSet) ? $ruleSet : explode('|', $ruleSet);
+            $rules = is_array($ruleSet) ? $ruleSet : self::splitRules($ruleSet);
             $value = $this->data[$field] ?? null;
             $present = array_key_exists($field, $this->data) && $value !== '' && $value !== null;
 
@@ -318,13 +374,33 @@ final class Validator
         return $replace;
     }
 
-    /** Dispatch a rule not known built-in to a registered custom rule (unknown → pass). */
+    /** Dispatch a rule not known built-in to a registered custom rule. */
     private function runExtension(string $rule, mixed $value, ?string $param): bool
     {
         $ext = self::$extensions[$rule] ?? null;
 
-        // Unknown rule: pass rather than fail hard (a typo shouldn't 422 the world).
-        return $ext === null ? true : $ext($value, $param, $this->data);
+        if ($ext !== null) {
+            return $ext($value, $param, $this->data);
+        }
+
+        // An unresolved rule used to PASS, on the reasoning that "a typo
+        // shouldn't 422 the world". That is exactly backwards: a rule name is
+        // written by a developer, never by a user, so a typo does not produce a
+        // wrong error — it silently REMOVES the constraint. `emial` instead of
+        // `email`, and every value validates. The failure is invisible in tests
+        // that only assert the happy path, and the endpoint is unguarded in
+        // production.
+        //
+        // Throwing is the safe direction: it fails at the first request in
+        // development, loudly, instead of shipping an unvalidated field.
+        throw new \LogicException(sprintf(
+            'Unknown validation rule [%s]. It is neither a built-in nor a registered extension. '
+            . 'Register it with Validator::extend(\'%s\', ...) or fix the spelling. '
+            . 'Known extensions: %s',
+            $rule,
+            $rule,
+            self::$extensions === [] ? '(none registered)' : implode(', ', array_keys(self::$extensions)),
+        ));
     }
 
     /** True when $value is a valid case of the (backed or pure) enum named in $param. */
