@@ -3,13 +3,60 @@
     "description": "HKM Kernel plugin providing 'validation.rules'.",
     "type": "library",
     "license": "MIT",
-    "keywords": ["hkm-kernel", "plugin", "php", "validation.rules"],
+    "keywords": [
+        "hkm-kernel",
+        "plugin",
+        "php",
+        "validation.rules"
+    ],
     "require": {
-        "php": ">=8.4"
+        "php": ">=8.4",
+        "alfacode-team/php-service-platform": "dev-master"
     },
     "autoload": {
         "psr-4": {
             "Plugins\\Validation\\": ""
+        }
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11 || ^12 || ^13",
+        "alfacode-team/hkm-plugin-i18n": "dev-main"
+    },
+    "repositories": [
+        {
+            "type": "vcs",
+            "url": "https://github.com/AlfaCode-Team/hkm-kernel"
+        },
+        {
+            "type": "vcs",
+            "url": "https://github.com/AlfaCode-Team/hkm-plugin-i18n"
+        },
+        {
+            "type": "vcs",
+            "url": "https://github.com/AlfaCode-Team/http"
+        },
+        {
+            "type": "vcs",
+            "url": "https://github.com/AlfaCode-Team/php-io-cli"
+        },
+        {
+            "type": "vcs",
+            "url": "https://github.com/AlfaCode-Team/Let-Migrate"
+        },
+        {
+            "type": "vcs",
+            "url": "https://github.com/hakrichTech/bindIt"
+        },
+        {
+            "type": "vcs",
+            "url": "https://github.com/hakrichTech/type-alias"
+        }
+    ],
+    "minimum-stability": "dev",
+    "prefer-stable": true,
+    "autoload-dev": {
+        "psr-4": {
+            "Tests\\Unit\\Plugins\\Validation\\": "tests/"
         }
     }
 }
