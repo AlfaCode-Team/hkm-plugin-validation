@@ -169,6 +169,39 @@ final class ValidatorLocalizationTest extends TestCase
         $this->assertSame(['The password field must match password confirmation.'], $errors['password']);
     }
 
+    // --- Rule parameters ------------------------------------------------------
+
+    public function test_a_custom_rule_can_reach_its_own_parameter(): void
+    {
+        // :param is what a rule registered through extend()/extendWith() has to
+        // use — it has no entry in the built-in replacement table. Without it
+        // every CommonRules line written that way ("must be a multiple of
+        // :param") printed the placeholder to the user, literally.
+        Lang::clear();
+        Validator::flushExtensions();
+        Validator::extend(
+            'multiple_of',
+            static fn(mixed $v, ?string $p): bool => false,
+            'The :field field must be a multiple of :param.',
+        );
+
+        $errors = Validator::make(['n' => 7], ['n' => 'multiple_of:5'])->errors();
+        Validator::flushExtensions();
+
+        $this->assertSame(['The n field must be a multiple of 5.'], $errors['n']);
+    }
+
+    public function test_a_built_in_rule_keeps_its_own_placeholder_name(): void
+    {
+        // :param is added first so the readable names still win where they exist.
+        Lang::clear();
+
+        $this->assertSame(
+            ['The n field must be between 2 and 4.'],
+            $this->errorsFor('n', ['n' => 'between:2,4'], ['n' => 9]),
+        );
+    }
+
     // --- Interpolation --------------------------------------------------------
 
     public function test_rule_parameters_still_interpolate_in_a_translated_message(): void

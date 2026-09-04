@@ -359,7 +359,16 @@ final class Validator
     /** @return array<string,string|int|float> */
     private function replacements(string $rule, ?string $param): array
     {
-        $replace = [];
+        // :param is available to EVERY rule that takes one. The built-in rules
+        // below name their parameter more readably (:min, :max, :other), but a
+        // rule registered through extend()/extendWith() has no entry here — so
+        // its message had no way to reach its own parameter, and every
+        // CommonRules line written with :param ("must be a multiple of :param",
+        // "must be greater than :param", "at least :param digits") rendered the
+        // placeholder literally to the user. Setting it first means the
+        // specific names below still win where they exist.
+        $replace = $param !== null ? ['param' => $param] : [];
+
         switch ($rule) {
             case 'min':
             case 'max':
