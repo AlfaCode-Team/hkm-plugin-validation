@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Plugins\Validation;
 
 use AlfacodeTeam\PhpServicePlatform\Kernel\Exceptions\ValidationException;
+use Plugins\I18n\Support\Lang;
 use Plugins\I18n\Translator;
 
 /**
@@ -16,8 +17,14 @@ use Plugins\I18n\Translator;
  *
  * Message resolution order per failed rule:
  *   1. custom override messages["{field}.{rule}"]
- *   2. Translator "validation.{rule}" (when a Translator is provided)
+ *   2. Translator "validation.{rule}"
  *   3. built-in English default
+ *
+ * The Translator is discovered automatically from the request (I18n's
+ * LocaleStage binds one per request), so validation is localized WITHOUT any
+ * call site opting in; pass one explicitly to override that. `:field` is
+ * resolved through "validation.attributes.{field}" and humanised when absent,
+ * so messages read "The first name field is required.", not "firstName".
  *
  * Usage:
  *   Validator::make($request->all(), [
@@ -365,7 +372,10 @@ final class Validator
                 break;
             case 'same':
             case 'different':
-                $replace['other'] = (string) $param;
+                // :other names another FIELD, so it gets the same treatment as
+                // :field — otherwise "must match passwordConfirmation" leaks a
+                // wire name into copy the reader is meant to act on.
+                $replace['other'] = $this->attribute((string) $param);
                 break;
             case 'in':
                 $replace['values'] = (string) $param;
@@ -460,7 +470,7 @@ final class Validator
     /** @param array<string,string|int|float> $replace */
     private function addError(string $field, string $rule, array $replace): void
     {
-        $replace['field'] = $field;
+        $replace['field'] = $this->attribute($field);
         $this->errors[$field][] = $this->message($field, $rule, $replace);
     }
 
@@ -472,23 +482,92 @@ final class Validator
             return $this->interpolate($custom, $replace);
         }
 
-        if ($this->translator !== null && $this->translator->has("validation.{$rule}")) {
-            return $this->translator->get("validation.{$rule}", $replace);
+        $translator = $this->translator();
+        if ($translator !== null && $translator->has("validation.{$rule}")) {
+            return $translator->get("validation.{$rule}", $replace);
         }
 
         $default = self::DEFAULTS[$rule]
             ?? self::$extensionMessages[$rule]
-            ?? "The {$field} field is invalid.";
+            ?? "The :field field is invalid.";
 
         return $this->interpolate($default, $replace);
     }
 
-    /** @param array<string,string|int|float> $replace */
+    /**
+     * The Translator to write messages with.
+     *
+     * An INJECTED one always wins — a caller that passed a translator meant that
+     * one. Otherwise fall back to the request-scoped translator I18n's
+     * LocaleStage binds, which is what makes validation localized BY DEFAULT.
+     *
+     * That fallback is the whole point. The constructor parameter existed from
+     * the start, but it was optional and threaded through Validator::make(),
+     * Validator::group(), AbstractDto::validated(), ::validate() and
+     * ::collectErrors() — six signatures a caller had to know to opt in. In
+     * practice not one call site in any first-party plugin passed it, so every
+     * validation message in the platform was English regardless of the request's
+     * locale, on a page whose every other string was translated.
+     *
+     * I18n is NOT a dependency of this plugin (requires: []), so its absence is
+     * normal, not an error: no Lang class, no translator, built-in defaults.
+     */
+    private function translator(): ?Translator
+    {
+        if ($this->translator !== null) {
+            return $this->translator;
+        }
+
+        return class_exists(Lang::class) ? Lang::translator() : null;
+    }
+
+    /**
+     * The human name for a field, as it should appear inside a message.
+     *
+     * Raw input keys are wire names, not prose: unlocalized, `:field` produced
+     * "The firstName field is required." A catalogue can name them properly via
+     * `validation.attributes.<field>`, and anything not listed is humanised —
+     * `firstName` / `first_name` / `first.name` all become "first name" — which
+     * is already better than the raw key and needs no catalogue entry at all.
+     */
+    private function attribute(string $field): string
+    {
+        $translator = $this->translator();
+        if ($translator !== null && $translator->has("validation.attributes.{$field}")) {
+            return $translator->get("validation.attributes.{$field}");
+        }
+
+        // camelCase → spaced, then separators → spaces. Applied in that order so
+        // `first_nameX` does not lose the underscore boundary to the camel split.
+        $spaced = preg_replace('/(?<=[a-z0-9])(?=[A-Z])/', ' ', $field) ?? $field;
+
+        return strtolower(str_replace(['_', '-', '.'], ' ', $spaced));
+    }
+
+    /**
+     * Fill :placeholders in a NON-translated line (a custom override or a
+     * built-in default); translated lines are interpolated by the Translator.
+     *
+     * Longest key first, and in ONE pass, so a short key can never eat a longer
+     * one that starts with it — `:min` must not corrupt `:minutes`. This mirrors
+     * what the Translator does, so a message reads the same whether it came from
+     * a catalogue or from DEFAULTS.
+     *
+     * @param array<string,string|int|float> $replace
+     */
     private function interpolate(string $line, array $replace): string
     {
-        foreach ($replace as $key => $value) {
-            $line = str_replace(':' . $key, (string) $value, $line);
+        if ($replace === []) {
+            return $line;
         }
-        return $line;
+
+        $pairs = [];
+        foreach ($replace as $key => $value) {
+            $pairs[':' . $key] = (string) $value;
+        }
+
+        uksort($pairs, static fn(string $a, string $b): int => strlen($b) <=> strlen($a));
+
+        return strtr($line, $pairs);
     }
 }

@@ -146,8 +146,50 @@ return [
 ## Message resolution order (per failed rule)
 
 1. DTO/`make()` override — `messages["{field}.{rule}"]`
-2. I18n translator — `validation.{rule}` (when a `Translator` is passed)
+2. I18n translator — `validation.{rule}`
 3. built-in default, then a registered custom-rule default
+
+## Localized messages
+
+Messages follow the request's locale automatically — no call site opts in:
+
+```php
+$v = static::validated($request);
+// fr → "Le champ prénom est obligatoire."
+// en → "The first name field is required."
+```
+
+The Translator is discovered from the request (I18n's `LocaleStage` binds one
+per request). Pass one to `Validator::make()` / `AbstractDto::validated()` only
+when you need a *different* locale from the request's — an injected translator
+always wins.
+
+> Before 1.1.0 the translator was an optional parameter threaded through six
+> signatures, and no first-party call site passed it — so every validation
+> message was English regardless of locale, on pages whose every other string
+> was translated. The parameter still works; it is just no longer the only way.
+
+I18n stays an OPTIONAL dependency (`requires: []`): the lookup is guarded, so a
+project without it gets the built-in English defaults exactly as before.
+
+### Field names
+
+`:field` resolves through `validation.attributes.{field}` and is humanised when
+absent, so a reader never sees a wire key:
+
+| field key | no catalogue entry | with `attributes` (fr) |
+|---|---|---|
+| `firstName` | first name | prénom |
+| `postal_code` | postal code | code postal |
+
+`:other` (from `same:` / `different:`) gets the same treatment, since it names a
+field too.
+
+Catalogues ship with the **I18n plugin** (`lang/{locale}/validation.php` — every
+built-in rule plus the `CommonRules` and `FinancialRules` packs). A project
+overrides individual keys from its own `resources/lang/{locale}/validation.php`;
+lang groups MERGE across the cascade, so listing your app's `attributes` does
+not mean copying the rule messages.
 
 ## Notes
 
